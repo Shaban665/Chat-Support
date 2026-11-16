@@ -7,6 +7,7 @@ import Widget from '../models/Widget.js';
 import Visitor from '../models/Visitor.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
+import Notification from '../models/Notification.js';
 
 import {
     isAllowedOrigin,
@@ -410,7 +411,7 @@ const initializeChatSockets = (io) => {
                     });
                 }
 
-                // Save message even when agent is offline
+                // Save message
                 const message = await Message.create({
                     conversation: conversation._id,
                     senderType: socket.role,
@@ -437,8 +438,57 @@ const initializeChatSockets = (io) => {
                 // Deliver message to active conversation participants
                 io.to(room).emit('new_message', message);
 
-                // Notify the widget owner about new visitor messages
-                if (socket.role === 'visitor') {
+                // Create persistent notification for visitor messages only
+                if (socket.role === 'visitor' && socket.widget.owner) {
+                    try {
+                        const visitor = await Visitor.findById(
+                            socket.visitor._id
+                        ).select('name email');
+
+                        const visitorName = visitor?.name || 'A visitor';
+
+                        const notification = await Notification.create({
+                            recipient: socket.widget.owner,
+                            widget: socket.widget._id,
+                            conversation: conversation._id,
+                            visitor: socket.visitor._id,
+                            type: 'new_message',
+                            title: 'New Message',
+                            message: `${visitorName}: ${message.content.slice(0, 100)}`,
+                        });
+
+                        // Notify connected agent in real time
+                        io.to(`agent:${socket.widget.owner.toString()}`).emit(
+                            'agent_notification',
+                            {
+                                _id: notification._id,
+                                type: notification.type,
+                                title: notification.title,
+                                message: notification.message,
+                                widget: {
+                                    _id: socket.widget._id,
+                                    name: socket.widget.name,
+                                },
+                                conversation: conversation._id,
+                                visitor: {
+                                    _id: socket.visitor._id,
+                                    name: visitorName,
+                                    email: visitor?.email || '',
+                                },
+                                isRead: notification.isRead,
+                                createdAt: notification.createdAt,
+                            }
+                        );
+
+                    } catch (notificationError) {
+                        // Do not fail message delivery if notification fails
+                        console.error(
+                            'Visitor Message Notification Error:',
+                            notificationError
+                        );
+                    }
+
+                    // Preserve existing inbox event
                     io.to(`agent:${socket.widget.owner.toString()}`).emit(
                         'inbox_new_message',
                         message

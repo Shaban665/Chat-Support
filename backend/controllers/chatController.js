@@ -5,6 +5,7 @@ import Widget from '../models/Widget.js';
 import Visitor from '../models/Visitor.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
+import Notification from '../models/Notification.js';
 
 import { isAllowedOrigin } from '../utils/domainUtils.js';
 
@@ -98,6 +99,9 @@ export const startConversation = async (req, res) => {
             });
         }
 
+        // Check whether visitor is submitting details for the first time
+        const isFirstProfileSubmission = !visitor.name && !visitor.email;
+
         // Save visitor-provided information
         visitor.name = visitorName;
         visitor.email = visitorEmail;
@@ -121,6 +125,46 @@ export const startConversation = async (req, res) => {
             });
 
             isNewConversation = true;
+        }
+
+        // Create notification for first-time visitor details submission
+        if (isFirstProfileSubmission) {
+            const notification = await Notification.create({
+                recipient: widget.owner,
+                widget: widget._id,
+                conversation: conversation._id,
+                visitor: visitor._id,
+                type: 'new_visitor',
+                title: 'New Visitor',
+                message: `${visitor.name} started a conversation.`,
+            });
+
+            const io = req.app.get('io');
+
+            // Send real-time notification to widget owner
+            if (io && widget.owner) {
+                io.to(`agent:${widget.owner.toString()}`).emit(
+                    'agent_notification',
+                    {
+                        _id: notification._id,
+                        type: notification.type,
+                        title: notification.title,
+                        message: notification.message,
+                        widget: {
+                            _id: widget._id,
+                            name: widget.name,
+                        },
+                        conversation: conversation._id,
+                        visitor: {
+                            _id: visitor._id,
+                            name: visitor.name,
+                            email: visitor.email,
+                        },
+                        isRead: notification.isRead,
+                        createdAt: notification.createdAt,
+                    }
+                );
+            }
         }
 
         // Notify widget owner about new conversation

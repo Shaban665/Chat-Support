@@ -47,6 +47,16 @@ export const getMessages = async (req, res) => {
             }
         );
 
+        // Reset reminder timer after visitor messages are read
+        await Conversation.updateOne(
+            { _id: conversationId },
+            {
+                $set: {
+                    lastUnreadReminderAt: null,
+                },
+            }
+        );
+
         const messages = await Message.find({
             conversation: conversationId,
         }).sort({ createdAt: 1 });

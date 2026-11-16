@@ -14,8 +14,10 @@ import agentRoutes from './routes/agentRoutes.js';
 import widgetRoutes from './routes/widgetRoutes.js';
 import visitorRoutes from './routes/visitorRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
 import initializeChatSockets from './sockets/chatSocket.js';
+import { startUnreadReminderScheduler } from './services/unreadReminderService.js';
 
 dotenv.config();
 
@@ -76,6 +78,7 @@ app.use('/api/agent', agentRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/visitors', visitorRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Start server
 const PORT = process.env.PORT || 5000;
@@ -84,11 +87,13 @@ const startServer = async () => {
     try {
         await connectDB();
 
+        // Start unread visitor message reminder scheduler
+        startUnreadReminderScheduler(io);
+
         httpServer.listen(PORT, () => {
             console.log(`Server running on port ${PORT}`);
             console.log('Socket.IO server is ready');
         });
-
     } catch (error) {
         console.error('Server startup failed:', error.message);
         process.exit(1);

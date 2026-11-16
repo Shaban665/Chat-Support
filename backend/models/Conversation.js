@@ -36,6 +36,12 @@ const conversationSchema = new mongoose.Schema(
             type: Date,
             default: null,
         },
+
+        // Tracks the last unread-message reminder
+        lastUnreadReminderAt: {
+            type: Date,
+            default: null,
+        },
     },
     { timestamps: true }
 );
