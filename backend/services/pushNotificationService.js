@@ -1,26 +1,48 @@
 
-import webpush from 'web-push';
+import { createRequire } from 'node:module';
 import PushSubscription from '../models/PushSubscription.js';
 
-const isVapidConfigured =
-    Boolean(process.env.VAPID_PUBLIC_KEY) &&
-    Boolean(process.env.VAPID_PRIVATE_KEY) &&
-    Boolean(process.env.VAPID_SUBJECT);
+const require = createRequire(import.meta.url);
+const webpush = require('web-push');
 
-if (isVapidConfigured) {
-    webpush.setVapidDetails(
-        process.env.VAPID_SUBJECT,
-        process.env.VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY
-    );
-} else {
-    console.warn(
-        'Web Push is disabled: VAPID environment variables are missing.'
-    );
-}
+let vapidConfigured = false;
+
+const configureWebPush = () => {
+    if (vapidConfigured) {
+        return true;
+    }
+
+    const publicKey = process.env.VAPID_PUBLIC_KEY;
+    const privateKey = process.env.VAPID_PRIVATE_KEY;
+    const subject = process.env.VAPID_SUBJECT;
+
+    if (!publicKey || !privateKey || !subject) {
+        console.warn(
+            'Web Push is disabled: VAPID environment variables are missing.'
+        );
+        return false;
+    }
+
+    try {
+        webpush.setVapidDetails(
+            subject,
+            publicKey,
+            privateKey
+        );
+
+        vapidConfigured = true;
+        return true;
+    } catch (error) {
+        console.error(
+            'Web Push VAPID Configuration Error:',
+            error.message
+        );
+        return false;
+    }
+};
 
 export const sendPushToUser = async (userId, payload) => {
-    if (!isVapidConfigured) {
+    if (!configureWebPush()) {
         return;
     }
 
@@ -37,8 +59,7 @@ export const sendPushToUser = async (userId, payload) => {
             subscriptions.map(async (savedSubscription) => {
                 const subscription = {
                     endpoint: savedSubscription.endpoint,
-                    expirationTime:
-                        savedSubscription.expirationTime,
+                    expirationTime: savedSubscription.expirationTime,
                     keys: savedSubscription.keys,
                 };
 
@@ -48,8 +69,10 @@ export const sendPushToUser = async (userId, payload) => {
                         JSON.stringify(payload)
                     );
                 } catch (error) {
-                    // Remove expired or invalid subscriptions.
-                    if (error.statusCode === 404 || error.statusCode === 410) {
+                    if (
+                        error.statusCode === 404 ||
+                        error.statusCode === 410
+                    ) {
                         await PushSubscription.deleteOne({
                             _id: savedSubscription._id,
                         });
