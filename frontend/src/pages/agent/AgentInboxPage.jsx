@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -8,8 +9,6 @@ import {
   ArrowLeft,
   Inbox,
   Circle,
-  Bell,
-  CheckCheck,
   X,
 } from "lucide-react";
 
@@ -33,12 +32,6 @@ function AgentInboxPage() {
   const [socketConnected, setSocketConnected] = useState(false);
   const [visitorTyping, setVisitorTyping] = useState(false);
 
-  // Notification states
-  const [notifications, setNotifications] = useState([]);
-  const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const [notificationOpen, setNotificationOpen] = useState(false);
-  const [notificationLoading, setNotificationLoading] = useState(false);
-
   // WhatsApp-style reminder popup
   const [reminderToast, setReminderToast] = useState(null);
 
@@ -50,7 +43,6 @@ function AgentInboxPage() {
   const typingActiveRef = useRef(false);
   const handledNavigationRef = useRef(null);
 
-  // Always keep latest conversations available to reminder timer
   const conversationsRef = useRef([]);
   const reminderToastTimeoutRef = useRef(null);
 
@@ -97,42 +89,17 @@ function AgentInboxPage() {
     }, 7000);
   };
 
-  // Fetch saved notifications when inbox opens
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchNotifications = async () => {
-      try {
-        setNotificationLoading(true);
-
-        const response = await api.get("/notifications");
-
-        if (!isMounted) return;
-
-        setNotifications(response.data?.notifications || []);
-        setUnreadNotifications(response.data?.unreadCount || 0);
-      } catch (err) {
-        console.error("Fetch Notifications Error:", err);
-      } finally {
-        if (isMounted) {
-          setNotificationLoading(false);
-        }
-      }
-    };
-
-    fetchNotifications();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // Open a conversation from a notification
+  // Open a conversation from global notification or reminder popup
   const handleOpenNotification = async (notification) => {
-    if (!notification?.conversation) return;
+    const conversationId =
+      typeof notification?.conversation === "object"
+        ? notification.conversation?._id
+        : notification?.conversation;
+
+    if (!conversationId) return;
 
     try {
-      // Mark saved notification as read
+      // Keep notification read status synchronized
       if (
         notification._id &&
         !notification._id.startsWith("reminder-") &&
@@ -141,24 +108,7 @@ function AgentInboxPage() {
         await api.patch(
           `/notifications/${notification._id}/read`
         );
-
-        setNotifications((previous) =>
-          previous.map((item) =>
-            item._id === notification._id
-              ? { ...item, isRead: true }
-              : item
-          )
-        );
-
-        setUnreadNotifications((previous) =>
-          Math.max(0, previous - 1)
-        );
       }
-
-      const conversationId =
-        typeof notification.conversation === "object"
-          ? notification.conversation._id
-          : notification.conversation;
 
       let conversation = conversationsRef.current.find(
         (item) => item._id === conversationId
@@ -207,89 +157,8 @@ function AgentInboxPage() {
       setMessage("");
       setChatError("");
       setReminderToast(null);
-      setNotificationOpen(false);
     } catch (err) {
       console.error("Open Notification Error:", err);
-    }
-  };
-
-  // Receive real-time notification
-  const handleAgentNotification = (notification) => {
-    if (!notification?._id) return;
-
-    let isDuplicate = false;
-
-    setNotifications((previous) => {
-      if (previous.some((item) => item._id === notification._id)) {
-        isDuplicate = true;
-        return previous;
-      }
-
-      return [notification, ...previous].slice(0, 50);
-    });
-
-    if (!isDuplicate && !notification.isRead) {
-      setUnreadNotifications((previous) => previous + 1);
-    }
-
-    // Show in-dashboard popup
-    showReminderToast(notification);
-
-    // Browser notification when dashboard is in background
-    if (
-      document.visibilityState === "hidden" &&
-      "Notification" in window &&
-      window.Notification.permission === "granted"
-    ) {
-      const browserNotification = new window.Notification(
-        notification.title || "New Notification",
-        {
-          body:
-            notification.message ||
-            "You have a new visitor update.",
-          tag: notification._id,
-        }
-      );
-
-      browserNotification.onclick = () => {
-        window.focus();
-        handleOpenNotification(notification);
-        browserNotification.close();
-      };
-    }
-  };
-
-  // Toggle notification panel and request browser permission
-  const handleToggleNotifications = async () => {
-    setNotificationOpen((previous) => !previous);
-
-    if (
-      "Notification" in window &&
-      window.Notification.permission === "default"
-    ) {
-      try {
-        await window.Notification.requestPermission();
-      } catch (err) {
-        console.error("Notification Permission Error:", err);
-      }
-    }
-  };
-
-  // Mark all notifications as read
-  const handleMarkAllNotificationsRead = async () => {
-    try {
-      await api.patch("/notifications/read-all");
-
-      setNotifications((previous) =>
-        previous.map((item) => ({
-          ...item,
-          isRead: true,
-        }))
-      );
-
-      setUnreadNotifications(0);
-    } catch (err) {
-      console.error("Mark All Notifications Read Error:", err);
     }
   };
 
@@ -348,28 +217,38 @@ function AgentInboxPage() {
     };
   }, []);
 
-  // Handle navigation from other pages
+  // Handle navigation from global notification bell or other pages
   useEffect(() => {
+    const navigationNotification = location.state?.notification;
     const navigationConversation = location.state?.conversation;
 
-    if (!navigationConversation?._id) return;
+    const navigationKey = navigationNotification
+      ? `${location.key}:notification:${navigationNotification._id}`
+      : navigationConversation?._id
+        ? `${location.key}:conversation:${navigationConversation._id}`
+        : null;
 
-    const navigationKey = `${location.key}:${navigationConversation._id}`;
+    if (!navigationKey) return;
 
     if (handledNavigationRef.current === navigationKey) return;
 
     handledNavigationRef.current = navigationKey;
 
-    setConversations((previous) =>
-      mergeConversation(previous, navigationConversation)
-    );
+    if (navigationNotification) {
+      handleOpenNotification(navigationNotification);
+      return;
+    }
 
-    setSelectedConversation(navigationConversation);
-    setChatError("");
-    setMessage("");
+    if (navigationConversation?._id) {
+      setConversations((previous) =>
+        mergeConversation(previous, navigationConversation)
+      );
+
+      setSelectedConversation(navigationConversation);
+      setChatError("");
+      setMessage("");
+    }
   }, [location.key, location.state]);
-
-  // Socket connection
 
   // Shared Socket Connection
   useEffect(() => {
@@ -571,7 +450,13 @@ function AgentInboxPage() {
       setVisitorTyping(Boolean(data.isTyping));
     };
 
-    // Register Inbox-specific listeners
+    // Reminder popup only; global bell handles notification history
+    const handleAgentNotification = (notification) => {
+      if (!notification?._id) return;
+
+      showReminderToast(notification);
+    };
+
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect_error", handleConnectError);
@@ -582,7 +467,6 @@ function AgentInboxPage() {
     socket.on("user_typing", handleUserTyping);
     socket.on("agent_notification", handleAgentNotification);
 
-    // Shared socket might already be connected
     if (socket.connected) {
       handleConnect();
     }
@@ -602,15 +486,10 @@ function AgentInboxPage() {
       socket.off("user_typing", handleUserTyping);
       socket.off("agent_notification", handleAgentNotification);
 
-      // Do not disconnect the shared socket
       socketRef.current = null;
       joinedConversationRef.current = null;
     };
   }, [socket]);
-
-
-  // UNREAD MESSAGE REMINDER - Every 5 minutes
-
 
   // Load selected conversation messages
   useEffect(() => {
@@ -629,21 +508,21 @@ function AgentInboxPage() {
     setVisitorTyping(false);
     setMessagesLoading(true);
 
-    const socket = socketRef.current;
+    const currentSocket = socketRef.current;
 
-    if (socket?.connected) {
+    if (currentSocket?.connected) {
       const previousJoinedId = joinedConversationRef.current;
 
       if (
         previousJoinedId &&
         previousJoinedId !== conversationId
       ) {
-        socket.emit("leave_conversation", {
+        currentSocket.emit("leave_conversation", {
           conversationId: previousJoinedId,
         });
       }
 
-      socket.emit(
+      currentSocket.emit(
         "join_conversation",
         { conversationId },
         (response) => {
@@ -707,17 +586,17 @@ function AgentInboxPage() {
   useEffect(() => {
     if (!socketConnected || !selectedConversation?._id) return;
 
-    const socket = socketRef.current;
+    const currentSocket = socketRef.current;
     const conversationId = selectedConversation._id;
 
     if (
-      !socket?.connected ||
+      !currentSocket?.connected ||
       joinedConversationRef.current === conversationId
     ) {
       return;
     }
 
-    socket.emit(
+    currentSocket.emit(
       "join_conversation",
       { conversationId },
       (response) => {
@@ -735,6 +614,15 @@ function AgentInboxPage() {
       block: "end",
     });
   }, [messages, visitorTyping]);
+
+  // Clear reminder timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (reminderToastTimeoutRef.current) {
+        clearTimeout(reminderToastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Search conversations
   const filteredConversations = useMemo(() => {
@@ -764,14 +652,14 @@ function AgentInboxPage() {
     setMessage(value);
 
     const conversationId = selectedConversationRef.current?._id;
-    const socket = socketRef.current;
+    const currentSocket = socketRef.current;
 
-    if (!conversationId || !socket?.connected) return;
+    if (!conversationId || !currentSocket?.connected) return;
 
     if (value.trim()) {
       if (!typingActiveRef.current) {
         typingActiveRef.current = true;
-        socket.emit("typing_start", { conversationId });
+        currentSocket.emit("typing_start", { conversationId });
       }
 
       if (typingTimeoutRef.current) {
@@ -779,7 +667,7 @@ function AgentInboxPage() {
       }
 
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit("typing_stop", { conversationId });
+        currentSocket.emit("typing_stop", { conversationId });
         typingActiveRef.current = false;
       }, 1000);
     } else {
@@ -788,7 +676,7 @@ function AgentInboxPage() {
       }
 
       if (typingActiveRef.current) {
-        socket.emit("typing_stop", { conversationId });
+        currentSocket.emit("typing_stop", { conversationId });
         typingActiveRef.current = false;
       }
     }
@@ -800,11 +688,11 @@ function AgentInboxPage() {
 
     const content = message.trim();
     const conversationId = selectedConversation?._id;
-    const socket = socketRef.current;
+    const currentSocket = socketRef.current;
 
     if (!content || !conversationId || sending) return;
 
-    if (!socket?.connected) {
+    if (!currentSocket?.connected) {
       setChatError(
         "Connection lost. Please wait for reconnection."
       );
@@ -816,14 +704,14 @@ function AgentInboxPage() {
     }
 
     if (typingActiveRef.current) {
-      socket.emit("typing_stop", { conversationId });
+      currentSocket.emit("typing_stop", { conversationId });
       typingActiveRef.current = false;
     }
 
     setSending(true);
     setChatError("");
 
-    socket.emit(
+    currentSocket.emit(
       "send_message",
       { conversationId, content },
       (response) => {
@@ -862,7 +750,6 @@ function AgentInboxPage() {
 
   return (
     <div className="flex min-h-0 w-full min-w-0 flex-col bg-[#f8f9fc] p-3 sm:p-4 lg:p-6">
-
       {/* WhatsApp-style reminder popup */}
       {reminderToast && (
         <div className="fixed right-4 top-4 z-[9999] w-[min(380px,calc(100vw-32px))] animate-in slide-in-from-top-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-2xl">
@@ -893,6 +780,7 @@ function AgentInboxPage() {
               type="button"
               onClick={() => setReminderToast(null)}
               className="rounded-lg p-1 text-gray-400 hover:bg-gray-100"
+              aria-label="Close reminder"
             >
               <X size={17} />
             </button>
@@ -901,8 +789,7 @@ function AgentInboxPage() {
       )}
 
       <div className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-1 flex-col">
-
-        {/* Inbox Heading + Notification Bell */}
+        {/* Inbox Heading */}
         <div className="mb-4 flex shrink-0 items-center justify-between gap-3 sm:mb-5">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-gray-900">
@@ -912,150 +799,9 @@ function AgentInboxPage() {
               Manage and reply to your customer conversations.
             </p>
           </div>
-
-          {/* Notification Bell */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={handleToggleNotifications}
-              className="relative flex h-11 w-11 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:bg-gray-50"
-              aria-label="Notifications"
-            >
-              <Bell size={20} />
-
-              {unreadNotifications > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                  {unreadNotifications > 99
-                    ? "99+"
-                    : unreadNotifications}
-                </span>
-              )}
-            </button>
-
-            {/* Notification Dropdown */}
-            {notificationOpen && (
-              <>
-                <button
-                  type="button"
-                  aria-label="Close notifications"
-                  className="fixed inset-0 z-40 cursor-default"
-                  onClick={() => setNotificationOpen(false)}
-                />
-
-                <div className="absolute right-0 top-14 z-50 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
-                  <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">
-                        Notifications
-                      </h3>
-                      <p className="text-xs text-gray-500">
-                        {unreadNotifications} unread notifications
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {unreadNotifications > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleMarkAllNotificationsRead}
-                          title="Mark all as read"
-                          className="rounded-lg p-2 text-[#6650d9] transition hover:bg-purple-50"
-                        >
-                          <CheckCheck size={18} />
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => setNotificationOpen(false)}
-                        className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-100"
-                      >
-                        <X size={18} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="max-h-[380px] overflow-y-auto">
-                    {notificationLoading ? (
-                      <p className="p-6 text-center text-sm text-gray-400">
-                        Loading notifications...
-                      </p>
-                    ) : notifications.length === 0 ? (
-                      <div className="p-8 text-center">
-                        <Bell
-                          size={28}
-                          className="mx-auto mb-2 text-gray-300"
-                        />
-                        <p className="text-sm font-medium text-gray-700">
-                          No notifications yet
-                        </p>
-                        <p className="mt-1 text-xs text-gray-400">
-                          New visitor updates will appear here.
-                        </p>
-                      </div>
-                    ) : (
-                      notifications.map((notification) => (
-                        <button
-                          key={notification._id}
-                          type="button"
-                          onClick={() =>
-                            handleOpenNotification(notification)
-                          }
-                          className={`flex w-full gap-3 border-b border-gray-100 p-4 text-left transition hover:bg-gray-50 ${
-                            !notification.isRead
-                              ? "bg-purple-50/60"
-                              : ""
-                          }`}
-                        >
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-100 text-[#6650d9]">
-                            {notification.type === "new_visitor" ? (
-                              <UserRound size={18} />
-                            ) : (
-                              <MessageCircle size={18} />
-                            )}
-                          </div>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm font-semibold text-gray-800">
-                                {notification.title}
-                              </p>
-
-                              {!notification.isRead && (
-                                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#6650d9]" />
-                              )}
-                            </div>
-
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-600">
-                              {notification.message}
-                            </p>
-
-                            {notification.widget?.name && (
-                              <p className="mt-1 truncate text-[10px] font-medium text-[#6650d9]">
-                                {notification.widget.name}
-                              </p>
-                            )}
-
-                            <p className="mt-1 text-[10px] text-gray-400">
-                              {notification.createdAt
-                                ? new Date(
-                                    notification.createdAt
-                                  ).toLocaleString()
-                                : ""}
-                            </p>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
         </div>
 
         <div className="grid h-[calc(100dvh-145px)] min-h-[420px] w-full min-w-0 grid-cols-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm md:h-[calc(100dvh-155px)] md:min-h-[500px] md:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[350px_minmax(0,1fr)]">
-
           {/* Conversation Sidebar */}
           <aside
             className={`${
@@ -1221,6 +967,7 @@ function AgentInboxPage() {
                   <button
                     onClick={() => setSelectedConversation(null)}
                     className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 md:hidden"
+                    aria-label="Back to conversations"
                   >
                     <ArrowLeft size={20} />
                   </button>
