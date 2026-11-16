@@ -6,15 +6,96 @@ import {
   MessageCircle,
   UserRound,
   X,
+  Smartphone,
 } from "lucide-react";
 
 import api from "../../services/api";
+
+// Convert VAPID public key into the format required by PushManager
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  const rawData = window.atob(base64);
+
+  return Uint8Array.from(rawData, (character) =>
+    character.charCodeAt(0)
+  );
+}
 
 function AgentNotificationBell({ socket, onOpenConversation }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Mobile push notification states
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushMessage, setPushMessage] = useState("");
+
+  // Check Service Worker and existing push subscription
+
+  // Check Service Worker and sync existing push subscription
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkPushSupport = async () => {
+      const supported =
+        "serviceWorker" in navigator &&
+        "PushManager" in window &&
+        "Notification" in window;
+
+      if (!isMounted) return;
+
+      setPushSupported(supported);
+
+      if (!supported) return;
+
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription =
+          await registration.pushManager.getSubscription();
+
+        if (!isMounted) return;
+
+        if (!subscription) {
+          setPushEnabled(false);
+          return;
+        }
+
+        // Sync browser subscription with authenticated backend user
+        await api.post(
+          "/push/subscribe",
+          subscription.toJSON()
+        );
+
+        if (isMounted) {
+          setPushEnabled(true);
+        }
+      } catch (error) {
+        console.error("Push Subscription Sync Error:", error);
+
+        if (isMounted) {
+          setPushEnabled(false);
+          setPushMessage(
+            "Unable to sync this device's push subscription."
+          );
+        }
+      }
+    };
+
+    checkPushSupport();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
 
   // Fetch saved notifications from MongoDB
   useEffect(() => {
@@ -63,7 +144,7 @@ function AgentNotificationBell({ socket, onOpenConversation }) {
         setUnreadCount((previous) => previous + 1);
       }
 
-      // Show desktop notification when dashboard is in background
+      // Existing desktop browser notification
       if (
         document.visibilityState === "hidden" &&
         "Notification" in window &&
@@ -72,7 +153,9 @@ function AgentNotificationBell({ socket, onOpenConversation }) {
         const browserNotification = new Notification(
           notification.title || "New notification",
           {
-            body: notification.message || "You received a new notification.",
+            body:
+              notification.message ||
+              "You received a new notification.",
             tag: notification._id,
           }
         );
@@ -92,20 +175,74 @@ function AgentNotificationBell({ socket, onOpenConversation }) {
     };
   }, [socket, onOpenConversation]);
 
-  // Request browser notification permission
-  const handleToggle = async () => {
-    if (
-      "Notification" in window &&
-      Notification.permission === "default"
-    ) {
-      try {
-        await Notification.requestPermission();
-      } catch (error) {
-        console.error("Notification Permission Error:", error);
-      }
-    }
+  // Enable Web Push notifications on this device
+  const handleEnablePush = async () => {
+    if (pushLoading) return;
 
-    setIsOpen((previous) => !previous);
+    try {
+      setPushLoading(true);
+      setPushMessage("");
+
+      if (!pushSupported) {
+        throw new Error(
+          "Push notifications are not supported by this browser."
+        );
+      }
+
+      const vapidPublicKey =
+        import.meta.env.VITE_VAPID_PUBLIC_KEY;
+
+      if (!vapidPublicKey) {
+        throw new Error(
+          "VAPID public key is missing from frontend environment variables."
+        );
+      }
+
+      // Request permission only after explicit user interaction
+      const permission = await Notification.requestPermission();
+
+      if (permission !== "granted") {
+        throw new Error(
+          permission === "denied"
+            ? "Notification permission is blocked. Enable it in Chrome site settings."
+            : "Notification permission was not granted."
+        );
+      }
+
+      // Wait for registered Service Worker
+      const registration = await navigator.serviceWorker.ready;
+
+      // Reuse an existing subscription if available
+      let subscription =
+        await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey:
+            urlBase64ToUint8Array(vapidPublicKey),
+        });
+      }
+
+      // Save device subscription in backend
+      await api.post(
+        "/push/subscribe",
+        subscription.toJSON()
+      );
+
+      setPushEnabled(true);
+      setPushMessage("Mobile notifications enabled successfully!");
+    } catch (error) {
+      console.error("Enable Push Notification Error:", error);
+
+      setPushMessage(
+        error.response?.data?.message ||
+          error.message ||
+          "Unable to enable mobile notifications."
+      );
+    } finally {
+      setPushLoading(false);
+    }
   };
 
   // Mark one notification as read
@@ -187,7 +324,7 @@ function AgentNotificationBell({ socket, onOpenConversation }) {
       {/* Notification Bell */}
       <button
         type="button"
-        onClick={handleToggle}
+        onClick={() => setIsOpen((previous) => !previous)}
         aria-label="Notifications"
         aria-expanded={isOpen}
         className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50 hover:text-[#6650d9]"
@@ -211,13 +348,14 @@ function AgentNotificationBell({ socket, onOpenConversation }) {
             className="fixed inset-0 z-40 cursor-default"
           />
 
-          <div className="absolute right-0 top-12 z-50 flex max-h-[min(520px,75vh)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
+          <div className="absolute right-0 top-12 z-50 flex max-h-[min(560px,80vh)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
             {/* Header */}
             <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
               <div>
                 <h3 className="font-semibold text-gray-900">
                   Notifications
                 </h3>
+
                 <p className="mt-0.5 text-xs text-gray-500">
                   {unreadCount} unread notifications
                 </p>
@@ -243,6 +381,56 @@ function AgentNotificationBell({ socket, onOpenConversation }) {
                   <X size={18} />
                 </button>
               </div>
+            </div>
+
+            {/* Mobile Push Notification Setup */}
+            <div className="shrink-0 border-b border-gray-100 bg-purple-50/60 p-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-[#6650d9]">
+                  <Smartphone size={20} />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-gray-800">
+                    Mobile Notifications
+                  </p>
+
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {pushEnabled
+                      ? "This device is subscribed."
+                      : "Receive alerts even when BulkChat is closed."}
+                  </p>
+                </div>
+
+                {!pushEnabled && (
+                  <button
+                    type="button"
+                    onClick={handleEnablePush}
+                    disabled={pushLoading || !pushSupported}
+                    className="shrink-0 rounded-lg bg-[#6650d9] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#5540c5] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {pushLoading ? "Enabling..." : "Enable"}
+                  </button>
+                )}
+
+                {pushEnabled && (
+                  <span className="shrink-0 text-xs font-semibold text-green-600">
+                    Enabled
+                  </span>
+                )}
+              </div>
+
+              {pushMessage && (
+                <p className="mt-2 text-xs text-gray-600">
+                  {pushMessage}
+                </p>
+              )}
+
+              {!pushSupported && (
+                <p className="mt-2 text-xs text-red-500">
+                  Push notifications are not supported in this browser.
+                </p>
+              )}
             </div>
 
             {/* Notification List */}

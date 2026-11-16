@@ -8,6 +8,7 @@ import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
 
 import { isAllowedOrigin } from '../utils/domainUtils.js';
+import { sendPushToUser } from '../services/pushNotificationService.js';
 
 // @desc Start or get visitor conversation
 // @route POST /api/chat/conversation
@@ -138,6 +139,17 @@ export const startConversation = async (req, res) => {
                 title: 'New Visitor',
                 message: `${visitor.name} started a conversation.`,
             });
+
+            // Send mobile push notification
+sendPushToUser(widget.owner, {
+    title: notification.title,
+    body: notification.message,
+    notificationId: notification._id.toString(),
+    conversationId: conversation._id.toString(),
+    url: '/agent/inbox',
+}).catch((error) => {
+    console.error('New Visitor Push Error:', error.message);
+});
 
             const io = req.app.get('io');
 

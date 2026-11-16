@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -15,10 +14,11 @@ import {
 } from "lucide-react";
 
 import api from "../../services/api";
-import { connectAgentSocket } from "../../services/socket";
+import { useAgentSocket } from "../../context/AgentSocketContext";
 
 function AgentInboxPage() {
   const location = useLocation();
+  const socket = useAgentSocket();
 
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
@@ -370,8 +370,10 @@ function AgentInboxPage() {
   }, [location.key, location.state]);
 
   // Socket connection
+
+  // Shared Socket Connection
   useEffect(() => {
-    const socket = connectAgentSocket();
+    if (!socket) return;
 
     socketRef.current = socket;
 
@@ -569,6 +571,7 @@ function AgentInboxPage() {
       setVisitorTyping(Boolean(data.isTyping));
     };
 
+    // Register Inbox-specific listeners
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect_error", handleConnectError);
@@ -579,7 +582,10 @@ function AgentInboxPage() {
     socket.on("user_typing", handleUserTyping);
     socket.on("agent_notification", handleAgentNotification);
 
-    socket.connect();
+    // Shared socket might already be connected
+    if (socket.connected) {
+      handleConnect();
+    }
 
     return () => {
       if (typingTimeoutRef.current) {
@@ -596,14 +602,15 @@ function AgentInboxPage() {
       socket.off("user_typing", handleUserTyping);
       socket.off("agent_notification", handleAgentNotification);
 
-      socket.disconnect();
+      // Do not disconnect the shared socket
       socketRef.current = null;
       joinedConversationRef.current = null;
     };
-  }, []);
+  }, [socket]);
+
 
   // UNREAD MESSAGE REMINDER - Every 5 minutes
-  
+
 
   // Load selected conversation messages
   useEffect(() => {

@@ -8,6 +8,7 @@ import Visitor from '../models/Visitor.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
+import { sendPushToUser } from '../services/pushNotificationService.js';
 
 import {
     isAllowedOrigin,
@@ -456,6 +457,16 @@ const initializeChatSockets = (io) => {
                             title: 'New Message',
                             message: `${visitorName}: ${message.content.slice(0, 100)}`,
                         });
+                        // Send mobile push notification
+sendPushToUser(socket.widget.owner, {
+    title: notification.title,
+    body: notification.message,
+    notificationId: notification._id.toString(),
+    conversationId: conversation._id.toString(),
+    url: '/agent/inbox',
+}).catch((error) => {
+    console.error('Mobile Push Error:', error.message);
+});
 
                         // Notify connected agent in real time
                         io.to(`agent:${socket.widget.owner.toString()}`).emit(

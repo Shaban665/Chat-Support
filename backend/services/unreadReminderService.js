@@ -2,6 +2,7 @@
 import Message from '../models/Message.js';
 import Conversation from '../models/Conversation.js';
 import Notification from '../models/Notification.js';
+import { sendPushToUser } from './pushNotificationService.js';
 
 const REMINDER_INTERVAL = 5 * 60 * 1000;
 const CHECK_INTERVAL = 60 * 1000;
@@ -107,6 +108,16 @@ export const startUnreadReminderScheduler = (io) => {
                             `${visitorName} has ` +
                             `${unreadData.unreadCount} unread visitor message(s).`,
                     });
+                    // Send mobile push notification
+sendPushToUser(conversation.widget.owner, {
+    title: notification.title,
+    body: notification.message,
+    notificationId: notification._id.toString(),
+    conversationId: conversation._id.toString(),
+    url: '/agent/inbox',
+}).catch((error) => {
+    console.error('Unread Reminder Push Error:', error.message);
+});
 
                     io.to(
                         `agent:${conversation.widget.owner.toString()}`

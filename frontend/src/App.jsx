@@ -13,6 +13,8 @@ import AgentSettingsPage from "./pages/agent/AgentSettingsPage";
 import AgentWidgetsPage from "./pages/agent/AgentWidgetsPage";
 import AgentInboxPage from "./pages/agent/AgentInboxPage";
 
+import AgentSocketLayout from "./layouts/AgentSocketLayout";
+
 function App() {
   return (
     <BrowserRouter>
@@ -34,12 +36,14 @@ function App() {
         <Route path="/embed/chat" element={<EmbeddedChatPage />} />
         <Route path="/widget/:publicKey" element={<EmbeddedChatPage />} />
 
-        {/* Agent Dashboard */}
-        <Route path="/agent/dashboard" element={<AgentDashboardPage />} />
-        <Route path="/agent/visitors" element={<AgentVisitorsPage />} />
-        <Route path="/agent/widgets" element={<AgentWidgetsPage />} />
-        <Route path="/agent/inbox" element={<AgentInboxPage />} />
-        <Route path="/agent/settings" element={<AgentSettingsPage />} />
+        {/* Shared Agent Socket Provider */}
+        <Route element={<AgentSocketLayout />}>
+          <Route path="/agent/dashboard" element={<AgentDashboardPage />} />
+          <Route path="/agent/visitors" element={<AgentVisitorsPage />} />
+          <Route path="/agent/widgets" element={<AgentWidgetsPage />} />
+          <Route path="/agent/inbox" element={<AgentInboxPage />} />
+          <Route path="/agent/settings" element={<AgentSettingsPage />} />
+        </Route>
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/agent/login" replace />} />

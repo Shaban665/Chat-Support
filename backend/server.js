@@ -15,6 +15,7 @@ import widgetRoutes from './routes/widgetRoutes.js';
 import visitorRoutes from './routes/visitorRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import pushRoutes from './routes/pushRoutes.js';
 
 import initializeChatSockets from './sockets/chatSocket.js';
 import { startUnreadReminderScheduler } from './services/unreadReminderService.js';
@@ -29,9 +30,24 @@ const httpServer = createServer(app);
 // Security middleware
 app.use(helmet());
 
+// Allowed frontend origins
+const allowedOrigins = (process.env.CLIENT_URL || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
+
 // CORS configuration
 app.use(cors({
-    origin: process.env.CLIENT_URL,
+    origin: (origin, callback) => {
+        // Allow requests without an Origin header
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(
+            new Error(`CORS blocked for origin: ${origin}`)
+        );
+    },
     credentials: true,
 }));
 
@@ -43,7 +59,7 @@ app.use(cookieParser());
 // Socket.IO configuration
 const io = new Server(httpServer, {
     cors: {
-        origin: process.env.CLIENT_URL,
+        origin: allowedOrigins,
         credentials: true,
         methods: ['GET', 'POST'],
     },
@@ -79,25 +95,23 @@ app.use('/api/widgets', widgetRoutes);
 app.use('/api/visitors', visitorRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/push', pushRoutes);
 
-// Start server
+// Connect database and start server
 const PORT = process.env.PORT || 5000;
 
-const startServer = async () => {
-    try {
-        await connectDB();
-
-        // Start unread visitor message reminder scheduler
-        startUnreadReminderScheduler(io);
-
+connectDB()
+    .then(() => {
         httpServer.listen(PORT, () => {
             console.log(`Server running on port ${PORT}`);
             console.log('Socket.IO server is ready');
-        });
-    } catch (error) {
-        console.error('Server startup failed:', error.message);
-        process.exit(1);
-    }
-};
+            console.log('Allowed CORS origins:', allowedOrigins);
 
-startServer();
+            // Start unread reminder scheduler
+            startUnreadReminderScheduler(io);
+        });
+    })
+    .catch((error) => {
+        console.error('Database connection failed:', error);
+        process.exit(1);
+    });
