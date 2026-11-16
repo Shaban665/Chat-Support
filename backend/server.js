@@ -50,6 +50,9 @@ const io = new Server(httpServer, {
 // Initialize chat sockets
 initializeChatSockets(io);
 
+// Make Socket.IO accessible inside controllers
+app.set('io', io);
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.status(200).json({

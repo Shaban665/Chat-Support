@@ -15,6 +15,7 @@ import {
   LoaderCircle,
   AlertCircle,
   CheckCircle2,
+  Code,
 } from "lucide-react";
 
 import api from "../../services/api";
@@ -32,6 +33,19 @@ function AgentWidgetsPage() {
   const [error, setError] = useState("");
   const [createdWidget, setCreatedWidget] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
+
+  // Generate installation script for the created widget
+  const widgetBaseUrl =
+    import.meta.env.VITE_WIDGET_BASE_URL || window.location.origin;
+
+  const installationCode = createdWidget?.publicKey
+    ? `<script
+  src="${widgetBaseUrl}/widget.js"
+  data-widget-key="${createdWidget.publicKey}"
+  async
+></script>`
+    : "";
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -50,6 +64,7 @@ function AgentWidgetsPage() {
     setError("");
     setCreatedWidget(null);
     setCopied(false);
+    setKeyCopied(false);
 
     const allowedDomains = formData.allowedDomains
       .split(",")
@@ -84,15 +99,34 @@ function AgentWidgetsPage() {
     }
   };
 
-  const handleCopy = async () => {
-    if (!createdWidget?.publicKey) return;
+  const handleCopyInstallation = async () => {
+    if (!installationCode) return;
 
     try {
-      await navigator.clipboard.writeText(createdWidget.publicKey);
+      await navigator.clipboard.writeText(installationCode);
+
       setCopied(true);
 
       setTimeout(() => {
         setCopied(false);
+      }, 2000);
+    } catch {
+      setError(
+        "Unable to copy installation code. Please copy it manually."
+      );
+    }
+  };
+
+  const handleCopyKey = async () => {
+    if (!createdWidget?.publicKey) return;
+
+    try {
+      await navigator.clipboard.writeText(createdWidget.publicKey);
+
+      setKeyCopied(true);
+
+      setTimeout(() => {
+        setKeyCopied(false);
       }, 2000);
     } catch {
       setError("Unable to copy Public Key. Please copy it manually.");
@@ -146,7 +180,7 @@ function AgentWidgetsPage() {
             </h1>
 
             <p className="mt-1 text-sm text-gray-500">
-              Create a chat widget for your website.
+              Create and install a chat widget on your website.
             </p>
           </div>
 
@@ -174,8 +208,8 @@ function AgentWidgetsPage() {
                 </h2>
 
                 <p className="mt-2 text-sm leading-6 text-purple-100">
-                  Create a unique BulkChat widget for your website.
-                  You will receive a Public Key after creation.
+                  Create a unique BulkChat widget and install it
+                  on your website using a simple script.
                 </p>
               </div>
             </div>
@@ -195,7 +229,7 @@ function AgentWidgetsPage() {
             </div>
           )}
 
-          {/* Success */}
+          {/* Success + Installation Code */}
           {createdWidget && (
             <section className="rounded-2xl border border-green-200 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex items-start gap-3">
@@ -210,14 +244,16 @@ function AgentWidgetsPage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-gray-500">
-                    Your widget "{createdWidget.name}" has been created.
+                    Your widget "{createdWidget.name}" is ready
+                    for installation.
                   </p>
                 </div>
               </div>
 
+              {/* Public Key */}
               <div className="mt-5 rounded-xl bg-gray-50 p-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  Your Public Key
+                  Widget Public Key
                 </p>
 
                 <div className="flex flex-wrap items-center gap-3">
@@ -227,19 +263,78 @@ function AgentWidgetsPage() {
 
                   <button
                     type="button"
-                    onClick={handleCopy}
-                    className="flex shrink-0 items-center gap-2 rounded-lg bg-[#6650d9] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5140b5]"
+                    onClick={handleCopyKey}
+                    className="flex shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                    {copied ? "Copied" : "Copy"}
+                    {keyCopied ? (
+                      <Check size={16} />
+                    ) : (
+                      <Copy size={16} />
+                    )}
+
+                    {keyCopied ? "Copied" : "Copy Key"}
                   </button>
                 </div>
               </div>
 
-              <p className="mt-3 text-xs text-gray-500">
-                Keep this key available. It will be needed during website
-                widget integration.
-              </p>
+              {/* Installation Instructions */}
+              <div className="mt-6">
+                <div className="mb-3 flex items-center gap-2">
+                  <Code size={19} className="text-[#6650d9]" />
+
+                  <h3 className="font-bold text-gray-900">
+                    Website Installation Code
+                  </h3>
+                </div>
+
+                <p className="mb-3 text-sm leading-6 text-gray-500">
+                  Copy this code and paste it before the closing
+                  <code className="mx-1 rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
+                    &lt;/body&gt;
+                  </code>
+                  tag of your website.
+                </p>
+
+                <div className="overflow-hidden rounded-xl bg-[#171923]">
+                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                    <span className="text-xs font-medium text-gray-400">
+                      HTML Installation Script
+                    </span>
+
+                    <span className="rounded-md bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-300">
+                      HTML
+                    </span>
+                  </div>
+
+                  <pre className="overflow-x-auto p-4 text-sm leading-7 text-purple-200">
+                    <code>{installationCode}</code>
+                  </pre>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyInstallation}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#6650d9] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#5140b5]"
+                >
+                  {copied ? (
+                    <Check size={17} />
+                  ) : (
+                    <Copy size={17} />
+                  )}
+
+                  {copied
+                    ? "Installation Code Copied!"
+                    : "Copy Installation Code"}
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                <p className="text-xs leading-5 text-blue-800">
+                  <strong>Next:</strong> Paste the copied script into
+                  your website's HTML and refresh your website.
+                  Your BulkChat chat button should appear.
+                </p>
+              </div>
             </section>
           )}
 
@@ -339,8 +434,9 @@ function AgentWidgetsPage() {
                 />
 
                 <p className="mt-1.5 text-xs text-gray-400">
-                  Separate multiple domains with commas. Leave blank to use
-                  the website domain automatically.
+                  Separate multiple domains with commas. Enter
+                  hostnames only, without https:// or paths.
+                  Leave blank to use the website domain automatically.
                 </p>
               </div>
 

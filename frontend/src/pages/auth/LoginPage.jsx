@@ -1,7 +1,11 @@
 
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MessageCircle, ArrowRight, ShieldCheck } from "lucide-react";
+import {
+  MessageCircle,
+  ArrowRight,
+  ShieldCheck,
+} from "lucide-react";
 import api from "../../services/api";
 
 function LoginPage() {
@@ -13,13 +17,14 @@ function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    setLoading(true);
-    setError("");
-
-    const formData = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const formData = new FormData(form);
 
     const email = formData.get("email").trim().toLowerCase();
     const password = formData.get("password");
+
+    setLoading(true);
+    setError("");
 
     try {
       const response = await api.post("/auth/login", {
@@ -29,8 +34,8 @@ function LoginPage() {
 
       const user = response.data.user;
 
-      // Only support agents can access agent dashboard.
-      if (user.role !== "admin") {
+      // Backend mein support agent ka actual role "agent" hai.
+      if (user?.role !== "agent") {
         try {
           await api.post("/auth/logout");
         } catch (logoutError) {
@@ -44,6 +49,8 @@ function LoginPage() {
       navigate("/agent/dashboard", { replace: true });
 
     } catch (error) {
+      console.error("Login Error:", error);
+
       setError(
         error.response?.data?.message ||
         "Login failed. Please check your credentials and try again."

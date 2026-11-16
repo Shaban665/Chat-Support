@@ -18,11 +18,14 @@ function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // Form ko await se pehle store karna zaroori hai
+    const form = e.currentTarget;
+
     setLoading(true);
     setError("");
     setSuccess("");
 
-    const formData = new FormData(e.currentTarget);
+    const formData = new FormData(form);
 
     const name = formData.get("name").trim();
     const email = formData.get("email").trim().toLowerCase();
@@ -36,18 +39,22 @@ function RegisterPage() {
       });
 
       setSuccess(
-        response.data.message || "Agent account created successfully."
+        response.data.message || "User registered successfully."
       );
 
-      e.currentTarget.reset();
+      // Stored form reference se reset hoga
+      form.reset();
 
       setTimeout(() => {
         navigate("/agent/login", { replace: true });
       }, 1200);
 
     } catch (error) {
+      console.error("Registration Error:", error);
+
       setError(
         error.response?.data?.message ||
+        error.message ||
         "Registration failed. Please try again."
       );
     } finally {
@@ -57,7 +64,6 @@ function RegisterPage() {
 
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex flex-col">
-      {/* Navbar */}
       <header className="px-6 md:px-12 py-7">
         <Link to="/support" className="flex items-center gap-3 w-fit">
           <div className="w-10 h-10 rounded-xl bg-[#6650d9] text-white flex items-center justify-center">
@@ -70,7 +76,6 @@ function RegisterPage() {
         </Link>
       </header>
 
-      {/* Agent Registration */}
       <main className="flex-1 flex items-center justify-center px-5 py-10">
         <div className="w-full max-w-md bg-white border border-[#e9eaf0] rounded-2xl p-7 sm:p-10 shadow-[0_15px_50px_rgba(30,25,70,0.06)]">
           <div className="mb-8">

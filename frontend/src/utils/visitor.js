@@ -22,12 +22,27 @@ export const getVisitorId = (publicKey) => {
   return visitorId;
 };
 
-export const trackVisitor = async (publicKey, visitorId) => {
+export const trackVisitor = async (
+  publicKey,
+  visitorId,
+  parentInfo
+) => {
+  if (!publicKey || !visitorId) {
+    throw new Error("Widget public key and visitor ID are required");
+  }
+
+  const { parentOrigin, currentPage, referrer = "" } = parentInfo || {};
+
+  if (!parentOrigin || !currentPage) {
+    throw new Error("Parent website information is missing");
+  }
+
   const response = await api.post("/visitors/track", {
     publicKey,
     visitorId,
-    currentPage: window.location.href,
-    referrer: document.referrer || "",
+    parentOrigin,
+    currentPage,
+    referrer,
   });
 
   return response.data;

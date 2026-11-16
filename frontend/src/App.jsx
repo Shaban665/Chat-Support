@@ -10,32 +10,42 @@ import EmbeddedChatPage from "./pages/support/EmbeddedChatPage";
 import AgentDashboardPage from "./pages/agent/AgentDashboardPage";
 import AgentVisitorsPage from "./pages/agent/AgentVisitorsPage";
 import AgentSettingsPage from "./pages/agent/AgentSettingsPage";
+import AgentWidgetsPage from "./pages/agent/AgentWidgetsPage";
+import AgentInboxPage from "./pages/agent/AgentInboxPage";
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Default route */}
         <Route path="/" element={<Navigate to="/support" replace />} />
 
-        {/* Agent authentication */}
+        {/* Authentication */}
         <Route path="/agent/login" element={<LoginPage />} />
         <Route path="/agent/register" element={<RegisterPage />} />
 
-        {/* Old auth URLs */}
         <Route path="/login" element={<Navigate to="/agent/login" replace />} />
         <Route path="/register" element={<Navigate to="/agent/register" replace />} />
 
-        {/* Customer support */}
+        {/* Support */}
         <Route path="/support" element={<SupportPage />} />
+
+        {/* Existing embedded chat route */}
         <Route path="/embed/chat" element={<EmbeddedChatPage />} />
 
-        {/* Agent workspace */}
+        {/* Dynamic website widget route */}
+        <Route
+          path="/widget/:publicKey"
+          element={<EmbeddedChatPage />}
+        />
+
+        {/* Agent Dashboard */}
         <Route path="/agent/dashboard" element={<AgentDashboardPage />} />
         <Route path="/agent/visitors" element={<AgentVisitorsPage />} />
+        <Route path="/agent/widgets" element={<AgentWidgetsPage />} />
+        <Route path="/agent/inbox" element={<AgentInboxPage />} />
         <Route path="/agent/settings" element={<AgentSettingsPage />} />
 
-        {/* Unknown routes */}
+        {/* Fallback */}
         <Route path="*" element={<Navigate to="/support" replace />} />
       </Routes>
     </BrowserRouter>
