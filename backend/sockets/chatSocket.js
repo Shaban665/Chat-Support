@@ -528,6 +528,159 @@ sendPushToUser(socket.widget.owner, {
             }
         });
 
+
+
+        // SEND MESSAGE
+        socket.on('send_message', async (data, callback) => {
+            try {
+                const { conversationId, content } = data || {};
+
+                if (
+                    !mongoose.isValidObjectId(conversationId) ||
+                    typeof content !== 'string' ||
+                    !content.trim() ||
+                    content.trim().length > 5000
+                ) {
+                    return callback?.({
+                        success: false,
+                        message: 'Valid conversation ID and message are required',
+                    });
+                }
+
+                const conversation = await getAuthorizedConversation(
+                    socket,
+                    conversationId
+                );
+
+                if (!conversation) {
+                    return callback?.({
+                        success: false,
+                        message: 'Conversation not found, closed, or access denied',
+                    });
+                }
+
+                // Save message
+                const message = await Message.create({
+                    conversation: conversation._id,
+                    senderType: socket.role,
+                    sender: socket.role === 'agent'
+                        ? socket.user._id
+                        : socket.visitor._id,
+                    content: content.trim(),
+                });
+
+                // Update conversation activity after an actual message
+                const now = new Date();
+
+                conversation.lastMessage = message.content;
+                conversation.lastMessageAt = message.createdAt;
+                conversation.lastActivityAt = now;
+
+                await conversation.save();
+
+                const room = `conversation:${conversationId}`;
+
+                // Stop typing indicator after sending
+                io.to(room).emit('user_typing', {
+                    conversationId: conversationId.toString(),
+                    senderType: socket.role,
+                    isTyping: false,
+                });
+
+                // Deliver message to active conversation participants
+                io.to(room).emit('new_message', message);
+
+                // Create persistent notification for visitor messages only
+                if (socket.role === 'visitor' && socket.widget.owner) {
+                    try {
+                        const visitor = await Visitor.findById(
+                            socket.visitor._id
+                        ).select('name email');
+
+                        const visitorName = visitor?.name || 'A visitor';
+
+                        const notification = await Notification.create({
+                            recipient: socket.widget.owner,
+                            widget: socket.widget._id,
+                            conversation: conversation._id,
+                            visitor: socket.visitor._id,
+                            type: 'new_message',
+                            title: 'New Message',
+                            message: `${visitorName}: ${message.content.slice(0, 100)}`,
+                        });
+
+                        // Send mobile push notification
+                        sendPushToUser(socket.widget.owner, {
+                            title: notification.title,
+                            body: notification.message,
+                            notificationId: notification._id.toString(),
+                            conversationId: conversation._id.toString(),
+                            url: '/agent/inbox',
+                        }).catch((error) => {
+                            console.error('Mobile Push Error:', error.message);
+                        });
+
+                        // Notify connected agent in real time
+                        io.to(`agent:${socket.widget.owner.toString()}`).emit(
+                            'agent_notification',
+                            {
+                                _id: notification._id,
+                                type: notification.type,
+                                title: notification.title,
+                                message: notification.message,
+                                widget: {
+                                    _id: socket.widget._id,
+                                    name: socket.widget.name,
+                                },
+                                conversation: conversation._id,
+                                visitor: {
+                                    _id: socket.visitor._id,
+                                    name: visitorName,
+                                    email: visitor?.email || '',
+                                },
+                                isRead: notification.isRead,
+                                createdAt: notification.createdAt,
+                            }
+                        );
+
+                    } catch (notificationError) {
+                        // Do not fail message delivery if notification fails
+                        console.error(
+                            'Visitor Message Notification Error:',
+                            notificationError
+                        );
+                    }
+
+                    // Preserve existing inbox event
+                    io.to(`agent:${socket.widget.owner.toString()}`).emit(
+                        'inbox_new_message',
+                        message
+                    );
+                }
+
+                console.log('Message saved successfully:', {
+                    conversationId: conversationId.toString(),
+                    senderType: socket.role,
+                    messageId: message._id.toString(),
+                });
+
+                return callback?.({
+                    success: true,
+                    message: 'Message sent successfully',
+                    data: message,
+                });
+
+            } catch (error) {
+                console.error('Send Message Error:', error);
+
+                return callback?.({
+                    success: false,
+                    message: 'Failed to send message',
+                });
+            }
+        });
+
+
         // DISCONNECTING
         socket.on('disconnecting', () => {
             for (const room of socket.rooms) {

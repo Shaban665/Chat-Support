@@ -7,13 +7,20 @@ import {
     getAgentConversations,
 } from '../controllers/chatController.js';
 
-import { getMessages } from '../controllers/messageController.js';
+import {
+    getMessages,
+    getVisitorMessages,
+} from '../controllers/messageController.js';
+
 import protect from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // Visitor: Start or get conversation
 router.post('/conversation', startConversation);
+
+// Visitor: Get own conversation messages
+router.post('/visitor/messages', getVisitorMessages);
 
 // Agent: Start or get visitor conversation
 router.post('/agent/conversation', protect, startAgentConversation);

@@ -37,6 +37,12 @@ const conversationSchema = new mongoose.Schema(
             default: null,
         },
 
+        // Tracks the latest actual chat activity
+        lastActivityAt: {
+            type: Date,
+            default: null,
+        },
+
         // Tracks the last unread-message reminder
         lastUnreadReminderAt: {
             type: Date,

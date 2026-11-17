@@ -45,7 +45,6 @@ const normalizeMessage = (payload) => {
 };
 
 function EmbeddedChatPage() {
-  // Dynamic widget public key from /widget/:publicKey
   const { publicKey: routePublicKey } = useParams();
 
   const publicKey =
@@ -65,6 +64,11 @@ function EmbeddedChatPage() {
   const [conversationId, setConversationId] = useState(null);
   const [visitorId, setVisitorId] = useState(null);
 
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [initializationFailed, setInitializationFailed] = useState(false);
+  const [initializationError, setInitializationError] = useState("");
+  const [initializationAttempt, setInitializationAttempt] = useState(0);
+
   const [isStartingChat, setIsStartingChat] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
@@ -80,10 +84,12 @@ function EmbeddedChatPage() {
   const isVisitorTypingRef = useRef(false);
   const joinedConversationRef = useRef(false);
 
+  // Prevent duplicate initialization during React StrictMode.
+  const initializationPromiseRef = useRef(null);
+
   // Receive and validate parent website information.
   useEffect(() => {
     const handleParentMessage = (event) => {
-      // Only accept messages from the actual parent window.
       if (event.source !== window.parent) {
         return;
       }
@@ -161,10 +167,165 @@ function EmbeddedChatPage() {
     });
   };
 
+  // Load messages belonging to a visitor's conversation.
+  const loadVisitorMessages = async (
+    currentVisitorId,
+    currentConversationId
+  ) => {
+    const response = await api.post("/chat/visitor/messages", {
+      publicKey,
+      visitorId: currentVisitorId,
+      parentOrigin: parentInfo.parentOrigin,
+      conversationId: currentConversationId,
+    });
+
+    if (!response.data?.success) {
+      throw new Error(
+        response.data?.message || "Unable to load previous messages"
+      );
+    }
+
+    const loadedMessages = Array.isArray(response.data.messages)
+      ? response.data.messages
+      : [];
+
+    return loadedMessages
+      .map(normalizeMessage)
+      .filter(Boolean);
+  };
+
+  // Automatically identify visitor and restore conversation.
+  useEffect(() => {
+    if (!parentInfo || !publicKey) return;
+
+    let isEffectActive = true;
+
+    if (!initializationPromiseRef.current) {
+      initializationPromiseRef.current = (async () => {
+        // Get persistent visitor identity from localStorage.
+        const currentVisitorId = getVisitorId(publicKey);
+
+        // Track visitor without resetting conversation activity.
+        await trackVisitor(
+          publicKey,
+          currentVisitorId,
+          parentInfo
+        );
+
+        // Ask backend whether profile details are already saved.
+        const response = await api.post("/chat/conversation", {
+          publicKey,
+          visitorId: currentVisitorId,
+          parentOrigin: parentInfo.parentOrigin,
+        });
+
+        if (!response.data?.success) {
+          throw new Error(
+            response.data?.message || "Unable to initialize chat"
+          );
+        }
+
+        const visitor = response.data.visitor;
+
+        // First-time visitor: show name and email form.
+        if (response.data.needsProfile) {
+          return {
+            needsProfile: true,
+            visitorId: currentVisitorId,
+            visitor,
+          };
+        }
+
+        const conversation = response.data.conversation;
+
+        if (!conversation?._id) {
+          throw new Error("Conversation information is missing");
+        }
+
+        // Restore previous messages before connecting the socket.
+        const previousMessages = await loadVisitorMessages(
+          currentVisitorId,
+          conversation._id
+        );
+
+        return {
+          needsProfile: false,
+          visitorId: currentVisitorId,
+          visitor,
+          conversationId: conversation._id,
+          messages: previousMessages,
+        };
+      })();
+    }
+
+    initializationPromiseRef.current
+      .then((result) => {
+        if (!isEffectActive) return;
+
+        setVisitorId(result.visitorId);
+
+        setCustomer({
+          name: result.visitor?.name || "",
+          email: result.visitor?.email || "",
+        });
+
+        if (result.needsProfile) {
+          setIsInitializing(false);
+          return;
+        }
+
+        setConversationId(result.conversationId);
+        setMessages(result.messages || []);
+
+        setMessage("");
+        setChatError("");
+        setIsAgentTyping(false);
+
+        setChatStarted(true);
+        setIsInitializing(false);
+      })
+      .catch((err) => {
+        if (!isEffectActive) return;
+
+        console.error("Visitor initialization error:", err);
+
+        setInitializationError(
+          err.response?.data?.message ||
+            err.message ||
+            "Unable to restore your conversation"
+        );
+
+        setInitializationFailed(true);
+        setIsInitializing(false);
+
+        // Allow a fresh initialization attempt.
+        initializationPromiseRef.current = null;
+      });
+
+    return () => {
+      isEffectActive = false;
+    };
+  }, [
+    parentInfo,
+    publicKey,
+    initializationAttempt,
+  ]);
+
+  // Retry visitor initialization.
+  const handleRetryInitialization = () => {
+    initializationPromiseRef.current = null;
+
+    setInitializationError("");
+    setInitializationFailed(false);
+    setIsInitializing(true);
+
+    setInitializationAttempt((prev) => prev + 1);
+  };
+
+  // Scroll to latest message.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
-      
     });
   }, [messages, isAgentTyping]);
 
@@ -204,6 +365,7 @@ function EmbeddedChatPage() {
   // Handle message input and typing indicator.
   const handleMessageChange = (e) => {
     const value = e.target.value;
+
     setMessage(value);
 
     const socket = socketRef.current;
@@ -368,7 +530,7 @@ function EmbeddedChatPage() {
       }
     };
 
-    // Register ALL listeners before connecting.
+    // Register all listeners before connecting.
     socket.on("connect", joinConversation);
     socket.on("new_message", handleNewMessage);
     socket.on("user_typing", handleTyping);
@@ -418,7 +580,7 @@ function EmbeddedChatPage() {
     }));
   };
 
-  // Start conversation.
+  // Start conversation after first-time profile submission.
   const handleStartChat = async (e) => {
     e.preventDefault();
 
@@ -438,7 +600,7 @@ function EmbeddedChatPage() {
         );
       }
 
-      const currentVisitorId = getVisitorId(publicKey);
+      const currentVisitorId = visitorId || getVisitorId(publicKey);
 
       // Track visitor using actual parent website information.
       await trackVisitor(
@@ -457,22 +619,31 @@ function EmbeddedChatPage() {
 
       const conversation = response.data?.conversation;
 
-      if (!response.data?.success || !conversation?._id) {
+      if (
+        !response.data?.success ||
+        response.data?.needsProfile ||
+        !conversation?._id
+      ) {
         throw new Error(
           response.data?.message || "Unable to start conversation"
         );
       }
 
-            setVisitorId(currentVisitorId);
-      setConversationId(conversation._id);
-
-      // Normalize automatic welcome message from backend
-      const welcomeMessage = normalizeMessage(
-        response.data?.welcomeMessage
+      // Load saved conversation messages, including welcome message.
+      const conversationMessages = await loadVisitorMessages(
+        currentVisitorId,
+        conversation._id
       );
 
-      // Show welcome message immediately in visitor chat
-      setMessages(welcomeMessage ? [welcomeMessage] : []);
+      setVisitorId(currentVisitorId);
+      setConversationId(conversation._id);
+
+      setCustomer({
+        name: response.data.visitor?.name || customer.name.trim(),
+        email: response.data.visitor?.email || customer.email.trim(),
+      });
+
+      setMessages(conversationMessages);
 
       setMessage("");
       setChatError("");
@@ -483,6 +654,7 @@ function EmbeddedChatPage() {
       joinedConversationRef.current = false;
 
       setChatStarted(true);
+
     } catch (err) {
       console.error("Start chat error:", err);
 
@@ -569,7 +741,7 @@ function EmbeddedChatPage() {
     });
   };
 
-  // Wait until the parent website sends its information.
+  // Wait until parent website sends its information.
   if (!parentInfo) {
     return (
       <div className="flex h-screen w-full flex-col items-center justify-center bg-[#f8f9fc] px-6 text-center">
@@ -588,6 +760,54 @@ function EmbeddedChatPage() {
     );
   }
 
+  // Restore visitor conversation loading screen.
+  if (isInitializing) {
+    return (
+      <div className="flex h-screen w-full flex-col items-center justify-center bg-[#f8f9fc] px-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6650d9]">
+          <MessageCircle size={28} />
+        </div>
+
+        <h2 className="mt-4 text-base font-bold text-gray-900">
+          Restoring Your Chat
+        </h2>
+
+        <p className="mt-2 max-w-xs text-xs leading-5 text-gray-500">
+          Please wait while we connect you to your previous conversation.
+        </p>
+
+        <div className="mt-5 h-6 w-6 animate-spin rounded-full border-2 border-[#6650d9] border-t-transparent" />
+      </div>
+    );
+  }
+
+  // Initialization error screen.
+  if (initializationFailed) {
+    return (
+      <div className="flex h-screen w-full flex-col items-center justify-center bg-[#f8f9fc] px-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-500">
+          <MessageCircle size={28} />
+        </div>
+
+        <h2 className="mt-4 text-base font-bold text-gray-900">
+          Unable to Restore Chat
+        </h2>
+
+        <p className="mt-2 max-w-xs text-xs leading-5 text-gray-500">
+          {initializationError}
+        </p>
+
+        <button
+          type="button"
+          onClick={handleRetryInitialization}
+          className="mt-5 rounded-xl bg-[#6650d9] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#5540c0]"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#f8f9fc]">
       {/* Header */}
@@ -599,7 +819,7 @@ function EmbeddedChatPage() {
 
           <div>
             <h2 className="text-sm font-bold">
-            Customer Support
+              Customer Support
             </h2>
 
             <div className="mt-1 flex items-center gap-1.5">
@@ -671,7 +891,7 @@ function EmbeddedChatPage() {
                   onChange={handleCustomerChange}
                   placeholder="Enter your name"
                   required
-                  maxLength={60}
+                  maxLength={100}
                   className="w-full py-3 text-sm outline-none"
                 />
               </div>
@@ -731,18 +951,6 @@ function EmbeddedChatPage() {
                   {customer.email}
                 </p>
               </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  stopVisitorTyping();
-                  setChatStarted(false);
-                }}
-                className="flex items-center gap-1 text-xs font-medium text-[#6650d9]"
-              >
-                <ArrowLeft size={14} />
-                Back
-              </button>
             </div>
           </div>
 
@@ -862,6 +1070,5 @@ function EmbeddedChatPage() {
     </div>
   );
 }
-
 
 export default EmbeddedChatPage;

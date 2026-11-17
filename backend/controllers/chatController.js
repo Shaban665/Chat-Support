@@ -15,6 +15,8 @@ import { sendPushToUser } from '../services/pushNotificationService.js';
 // @access Public (Visitor)
 
 
+
+
 export const startConversation = async (req, res) => {
     try {
         const {
@@ -25,38 +27,18 @@ export const startConversation = async (req, res) => {
             parentOrigin,
         } = req.body;
 
-        // Validate required fields
+        // Validate common required fields
         if (
             typeof publicKey !== 'string' ||
             !publicKey.trim() ||
             typeof visitorId !== 'string' ||
             !visitorId.trim() ||
-            typeof name !== 'string' ||
-            typeof email !== 'string' ||
-            typeof parentOrigin !== 'string'
+            typeof parentOrigin !== 'string' ||
+            !parentOrigin.trim()
         ) {
             return res.status(400).json({
                 success: false,
-                message: 'Public key, visitor ID, name, email and parent origin are required',
-            });
-        }
-
-        const visitorName = name.trim();
-        const visitorEmail = email.trim().toLowerCase();
-
-        if (visitorName.length < 2 || visitorName.length > 100) {
-            return res.status(400).json({
-                success: false,
-                message: 'Name must be between 2 and 100 characters',
-            });
-        }
-
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-        if (!emailRegex.test(visitorEmail)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please enter a valid email address',
+                message: 'Public key, visitor ID and parent origin are required',
             });
         }
 
@@ -104,33 +86,107 @@ export const startConversation = async (req, res) => {
         // Check whether visitor is submitting details for the first time
         const isFirstProfileSubmission = !visitor.name && !visitor.email;
 
-        // Save visitor-provided information
-        visitor.name = visitorName;
-        visitor.email = visitorEmail;
+        // Handle incomplete visitor profile
+        if (!visitor.name || !visitor.email) {
+            // Initial widget load: ask frontend to show profile form
+            if (
+                typeof name !== 'string' ||
+                typeof email !== 'string'
+            ) {
+                return res.status(200).json({
+                    success: true,
+                    needsProfile: true,
+                    message: 'Please submit your details to start chatting',
+                    visitor: {
+                        _id: visitor._id,
+                        visitorId: visitor.visitorId,
+                        name: visitor.name || '',
+                        email: visitor.email || '',
+                    },
+                    conversation: null,
+                    welcomeMessage: null,
+                    isNewConversation: false,
+                });
+            }
 
-        await visitor.save();
+            const visitorName = name.trim();
+            const visitorEmail = email.trim().toLowerCase();
 
-        // Reuse existing open conversation
+            if (visitorName.length < 2 || visitorName.length > 100) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Name must be between 2 and 100 characters',
+                });
+            }
+
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+            if (!emailRegex.test(visitorEmail)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please enter a valid email address',
+                });
+            }
+
+            visitor.name = visitorName;
+            visitor.email = visitorEmail;
+
+            await visitor.save();
+        }
+
+        const now = new Date();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+        // Find latest open conversation for this visitor and widget
         let conversation = await Conversation.findOne({
             widget: widget._id,
             visitor: visitor._id,
             status: 'open',
+        }).sort({
+            lastActivityAt: -1,
+            lastMessageAt: -1,
+            createdAt: -1,
         });
 
         let isNewConversation = false;
         let welcomeMessage = null;
 
+        if (conversation) {
+            // Fallback for older conversations without lastActivityAt
+            const lastActivity =
+                conversation.lastActivityAt ||
+                conversation.lastMessageAt ||
+                conversation.createdAt;
+
+            const inactiveTime =
+                now.getTime() - new Date(lastActivity).getTime();
+
+            if (inactiveTime >= TWENTY_FOUR_HOURS) {
+                // Close expired conversation without deleting messages
+                conversation.status = 'closed';
+                await conversation.save();
+
+                conversation = null;
+            }
+        }
+
         if (!conversation) {
+            // Create new conversation after expiry or first visit
             conversation = await Conversation.create({
                 widget: widget._id,
                 visitor: visitor._id,
                 status: 'open',
+                lastActivityAt: now,
             });
 
             isNewConversation = true;
+        } else {
+            // Resume existing conversation
+            conversation.lastActivityAt = now;
+            await conversation.save();
         }
 
-        // Create automatic welcome message for new conversations only
+        // Create welcome message only for a new conversation
         if (isNewConversation) {
             welcomeMessage = await Message.create({
                 conversation: conversation._id,
@@ -140,9 +196,9 @@ export const startConversation = async (req, res) => {
                 isRead: true,
             });
 
-            // Update conversation's latest message preview
             conversation.lastMessage = welcomeMessage.content;
             conversation.lastMessageAt = welcomeMessage.createdAt;
+            conversation.lastActivityAt = now;
 
             await conversation.save();
         }
@@ -159,7 +215,6 @@ export const startConversation = async (req, res) => {
                 message: `${visitor.name} started a conversation.`,
             });
 
-            // Send mobile push notification
             sendPushToUser(widget.owner, {
                 title: notification.title,
                 body: notification.message,
@@ -172,7 +227,6 @@ export const startConversation = async (req, res) => {
 
             const io = req.app.get('io');
 
-            // Send real-time notification to widget owner
             if (io && widget.owner) {
                 io.to(`agent:${widget.owner.toString()}`).emit(
                     'agent_notification',
@@ -227,6 +281,7 @@ export const startConversation = async (req, res) => {
             },
             conversation,
             welcomeMessage,
+            isNewConversation,
         });
 
     } catch (error) {
@@ -238,6 +293,8 @@ export const startConversation = async (req, res) => {
         });
     }
 };
+
+
 
 
 
