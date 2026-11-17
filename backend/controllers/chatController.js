@@ -14,6 +14,7 @@ import { sendPushToUser } from '../services/pushNotificationService.js';
 // @route POST /api/chat/conversation
 // @access Public (Visitor)
 
+
 export const startConversation = async (req, res) => {
     try {
         const {
@@ -117,6 +118,7 @@ export const startConversation = async (req, res) => {
         });
 
         let isNewConversation = false;
+        let welcomeMessage = null;
 
         if (!conversation) {
             conversation = await Conversation.create({
@@ -126,6 +128,23 @@ export const startConversation = async (req, res) => {
             });
 
             isNewConversation = true;
+        }
+
+        // Create automatic welcome message for new conversations only
+        if (isNewConversation) {
+            welcomeMessage = await Message.create({
+                conversation: conversation._id,
+                senderType: 'agent',
+                sender: null,
+                content: 'Hey! 👋 Welcome! How can I help you today?',
+                isRead: true,
+            });
+
+            // Update conversation's latest message preview
+            conversation.lastMessage = welcomeMessage.content;
+            conversation.lastMessageAt = welcomeMessage.createdAt;
+
+            await conversation.save();
         }
 
         // Create notification for first-time visitor details submission
@@ -141,15 +160,15 @@ export const startConversation = async (req, res) => {
             });
 
             // Send mobile push notification
-sendPushToUser(widget.owner, {
-    title: notification.title,
-    body: notification.message,
-    notificationId: notification._id.toString(),
-    conversationId: conversation._id.toString(),
-    url: '/agent/inbox',
-}).catch((error) => {
-    console.error('New Visitor Push Error:', error.message);
-});
+            sendPushToUser(widget.owner, {
+                title: notification.title,
+                body: notification.message,
+                notificationId: notification._id.toString(),
+                conversationId: conversation._id.toString(),
+                url: '/agent/inbox',
+            }).catch((error) => {
+                console.error('New Visitor Push Error:', error.message);
+            });
 
             const io = req.app.get('io');
 
@@ -207,6 +226,7 @@ sendPushToUser(widget.owner, {
                 email: visitor.email,
             },
             conversation,
+            welcomeMessage,
         });
 
     } catch (error) {
@@ -218,6 +238,7 @@ sendPushToUser(widget.owner, {
         });
     }
 };
+
 
 
 // @desc Start or get a conversation from Agent Visitors page

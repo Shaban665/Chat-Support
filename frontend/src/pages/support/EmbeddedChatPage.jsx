@@ -463,10 +463,17 @@ function EmbeddedChatPage() {
         );
       }
 
-      setVisitorId(currentVisitorId);
+            setVisitorId(currentVisitorId);
       setConversationId(conversation._id);
 
-      setMessages([]);
+      // Normalize automatic welcome message from backend
+      const welcomeMessage = normalizeMessage(
+        response.data?.welcomeMessage
+      );
+
+      // Show welcome message immediately in visitor chat
+      setMessages(welcomeMessage ? [welcomeMessage] : []);
+
       setMessage("");
       setChatError("");
       setIsAgentTyping(false);
@@ -592,7 +599,7 @@ function EmbeddedChatPage() {
 
           <div>
             <h2 className="text-sm font-bold">
-              BulkChat Support
+            Customer Support
             </h2>
 
             <div className="mt-1 flex items-center gap-1.5">
@@ -847,7 +854,7 @@ function EmbeddedChatPage() {
             </form>
 
             <p className="mt-2 text-center text-[10px] text-gray-400">
-              Powered by BulkChat
+              Powered by Customer
             </p>
           </div>
         </>
